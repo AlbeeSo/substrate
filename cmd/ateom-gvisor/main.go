@@ -663,10 +663,16 @@ func (s *AteomService) RunWorkload(ctx context.Context, req *ateompb.RunWorkload
 		return nil, fmt.Errorf("while composing pause rootfs: %w", err)
 	}
 	containersToDelete = append(containersToDelete, ocispec.PauseContainer)
-	if err := rcmd.cmdCreate(ctx, os.Stdout, ocispec.PauseContainer, nil); err != nil {
+	// Attribute runsc CLI output and the pause container's stdio to the actor.
+	pw, err := s.actorLogger.StartJSONLogPipe(attribution, ocispec.PauseContainer)
+	if err != nil {
+		return nil, fmt.Errorf("while starting pause log pipe: %w", err)
+	}
+	defer pw.Close()
+	if err := rcmd.cmdCreate(ctx, pw, ocispec.PauseContainer, nil); err != nil {
 		return nil, fmt.Errorf("while creating pause container: %w", err)
 	}
-	if err := rcmd.cmdStart(ctx, os.Stdout, ocispec.PauseContainer); err != nil {
+	if err := rcmd.cmdStart(ctx, pw, ocispec.PauseContainer); err != nil {
 		return nil, fmt.Errorf("while starting pause container: %w", err)
 	}
 
@@ -1017,16 +1023,22 @@ func (s *AteomService) RestoreWorkload(ctx context.Context, req *ateompb.Restore
 		return nil, fmt.Errorf("while composing pause rootfs: %w", err)
 	}
 
+	// Attribute runsc CLI output and the pause container's stdio to the actor.
+	pw, err := s.actorLogger.StartJSONLogPipe(attribution, ocispec.PauseContainer)
+	if err != nil {
+		return nil, fmt.Errorf("while starting pause log pipe: %w", err)
+	}
+	defer pw.Close()
 	switch fidelity {
 	case ateompb.SnapshotFidelity_SNAPSHOT_FIDELITY_VOLUMES:
 		// Create and start pause container (cold boot with durable-dir volumes restored from fs/)
 		containersToDelete = append(containersToDelete, ocispec.PauseContainer)
-		err := rcmd.cmdCreate(ctx, os.Stdout, ocispec.PauseContainer, restoreArgs)
+		err := rcmd.cmdCreate(ctx, pw, ocispec.PauseContainer, restoreArgs)
 		timing.pauseCreate = lap(&tLast)
 		if err != nil {
 			return nil, fmt.Errorf("while creating pause container: %w", err)
 		}
-		err = rcmd.cmdStart(ctx, os.Stdout, ocispec.PauseContainer)
+		err = rcmd.cmdStart(ctx, pw, ocispec.PauseContainer)
 		timing.pauseRestore = lap(&tLast)
 		if err != nil {
 			return nil, fmt.Errorf("while starting pause container: %w", err)
@@ -1034,18 +1046,16 @@ func (s *AteomService) RestoreWorkload(ctx context.Context, req *ateompb.Restore
 	case ateompb.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY:
 		// Create and restore pause container (restores both process/rootfs and fs/ durable-dir volumes)
 		containersToDelete = append(containersToDelete, ocispec.PauseContainer)
-		err := rcmd.cmdCreate(ctx, os.Stdout, ocispec.PauseContainer, restoreArgs)
+		err := rcmd.cmdCreate(ctx, pw, ocispec.PauseContainer, restoreArgs)
 		timing.pauseCreate = lap(&tLast)
 		if err != nil {
 			return nil, fmt.Errorf("while creating pause container: %w", err)
 		}
-		err = rcmd.cmdRestore(ctx, os.Stdout, ocispec.PauseContainer, checkpointDir)
+		err = rcmd.cmdRestore(ctx, pw, ocispec.PauseContainer, checkpointDir)
 		timing.pauseRestore = lap(&tLast)
 		if err != nil {
 			return nil, fmt.Errorf("while restoring pause container: %w", err)
 		}
-	default:
-		return nil, fmt.Errorf("unexpected snapshot fidelity: %v", fidelity)
 	}
 
 	// Create and restore each application container, each with its own log pipe so
@@ -1082,8 +1092,6 @@ func (s *AteomService) RestoreWorkload(ctx context.Context, req *ateompb.Restore
 			if err != nil {
 				return nil, fmt.Errorf("while restoring %q application container: %w", ac.GetName(), err)
 			}
-		default:
-			return nil, fmt.Errorf("unexpected snapshot fidelity: %v", fidelity)
 		}
 	}
 
