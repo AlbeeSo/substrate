@@ -284,6 +284,12 @@ message Snapshot {
   //
   // +k8s:optional
   SnapshotStorage durable_snapshot = 7;
+
+  // sandbox_runtime is the runtime the actor ran under when the snapshot was
+  // taken.
+  //
+  // +k8s:optional
+  SandboxRuntime sandbox_runtime = 8;
 }
 
 // SnapshotFidelity orders the state layers a snapshot can hold, lowest to
@@ -910,6 +916,12 @@ message WorkerAssignment {
   // +k8s:optional
   // +k8s:minimum=0
   int64 worker_epoch = 8;
+
+  // sandbox_runtime is the sandbox runtime and compatibility version the Actor
+  // was started or restored under on this Worker.
+  //
+  // +k8s:optional
+  SandboxRuntime sandbox_runtime = 9;
 }
 
 // TagStatus is the server-owned state of a Tag.
@@ -2302,8 +2314,10 @@ message VersionedSandboxCompat {
   // features after masking (e.g. "architecture", "cpu_features").
   // Matched against a snapshot under the same schema_version: every attribute
   // on the snapshot must be present on the worker with an equal value; keys
-  // only the worker has are ignored. Bump schema_version when a key's meaning
-  // changes or older snapshots must no longer match.
+  // only the worker has are ignored, so a worker can gain keys under one
+  // schema_version without invalidating older snapshots. Removing or
+  // recomputing a key is a new schema_version, under which older snapshots
+  // no longer match.
   // Order as sent does not matter: ate-api-server sorts attributes by key
   // before recording them.
   //
