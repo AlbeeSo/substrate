@@ -40,11 +40,11 @@ import (
 	"github.com/agent-substrate/substrate/internal/ateinterceptors"
 	"github.com/agent-substrate/substrate/internal/ateom"
 	"github.com/agent-substrate/substrate/internal/ateomcgroup"
+	"github.com/agent-substrate/substrate/internal/ateominit"
 	"github.com/agent-substrate/substrate/internal/ateomnet"
 	"github.com/agent-substrate/substrate/internal/ateomphaselog"
 	"github.com/agent-substrate/substrate/internal/ateomstats"
 	"github.com/agent-substrate/substrate/internal/ateomtunnel"
-	"github.com/agent-substrate/substrate/internal/childreap"
 	"github.com/agent-substrate/substrate/internal/imagecache"
 	"github.com/agent-substrate/substrate/internal/nodepath"
 	"github.com/agent-substrate/substrate/internal/ocispec"
@@ -85,9 +85,6 @@ var (
 
 	otlpRelaySocket = pflag.String("otlp-relay-socket", nodepath.AteletOTLPSocketPath(),
 		"Unix socket of atelet's OTLP relay to export telemetry through, keeping it off the pod network. Empty, or absent at startup, exports directly to OTEL_EXPORTER_OTLP_ENDPOINT instead.")
-
-	// reaper collects children orphaned in the pod PID namespace.
-	reaper = childreap.New()
 )
 
 // minUsageSampleInterval is the floor of --usage-sample-interval, the same as
@@ -101,6 +98,7 @@ const minUsageSampleInterval = 50 * time.Second
 const workloadGracePeriod = 30 * time.Minute
 
 func main() {
+	ateominit.RunIfPID1()
 	pflag.Parse()
 	if *showVersion {
 		fmt.Println(version.String())
@@ -202,9 +200,6 @@ func do(ctx context.Context) error {
 	if _, err := ateomcgroup.Delegate(ctx); err != nil {
 		return fmt.Errorf("while setting up cgroup delegation: %w", err)
 	}
-
-	go reaper.Run(ctx)
-	slog.InfoContext(ctx, "Child process reaper launched")
 
 	// Clean up any old socket.
 	sockPath := nodepath.AteomSocketPath(*podUID)
@@ -794,11 +789,24 @@ func (s *AteomService) CheckpointWorkload(ctx context.Context, req *ateompb.Chec
 	case ateompb.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY:
 		// Checkpoint pause container (root of the sandbox), splitting durable-dir
 		// volumes into <checkpointPath>/fs when present.
+		sandbox, sbErr := openSandboxProcess(req.GetActorDirs())
+		if sbErr != nil {
+			slog.WarnContext(ctx, "Cannot watch the sandbox exit after checkpoint", slog.Any("err", sbErr))
+		} else {
+			defer sandbox.Close()
+		}
 		err := rcmd.cmdCheckpoint(ctx, ocispec.PauseContainer, checkpointPath, durablePaths)
-		timing.checkpoint = lap(&tLast)
 		if err != nil {
+			timing.checkpoint = lap(&tLast)
 			return nil, fmt.Errorf("while checkpointing pause: %w", err)
 		}
+		// the checkpoint stops the sandbox, runsc delete fails until it is reaped
+		if sandbox != nil {
+			if err := sandbox.waitGone(sandboxExitTimeout); err != nil {
+				slog.WarnContext(ctx, "Sandbox did not go away after checkpoint", slog.Any("err", err))
+			}
+		}
+		timing.checkpoint = lap(&tLast)
 	default:
 		return nil, fmt.Errorf("unsupported snapshot fidelity: %v", fidelity)
 	}
