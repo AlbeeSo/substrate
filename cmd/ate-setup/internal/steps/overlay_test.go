@@ -441,6 +441,12 @@ func TestRenderCordonControlPlane(t *testing.T) {
 			want: []string{"ate-api-server"},
 		},
 		{
+			name: "kind api server overlay",
+			cfg:  config.Config{Kind: true},
+			path: func(e *Env) string { return e.apiServerManifestPath() },
+			want: []string{"ate-api-server"},
+		},
+		{
 			name: "podcert file",
 			path: func(e *Env) string { return e.Cfg.Manifest("pod-certificate-controller.yaml") },
 			want: []string{"podcertificate-controller"},
@@ -629,7 +635,7 @@ func TestRenderFakeDataPlane(t *testing.T) {
 		{
 			name:       "kind atelet overlay",
 			cfg:        config.Config{Kind: true},
-			path:       func(e *Env) string { return e.Cfg.Path(installDir + "/kind/atelet") },
+			path:       func(e *Env) string { return e.ateletManifestPath() },
 			wantAtelet: true, wantStorage: "s3",
 		},
 		{

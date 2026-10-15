@@ -306,7 +306,7 @@ func (e *Env) DeployAteAPIServer(ctx context.Context) error {
 			return err
 		}
 	}
-	manifest, err := e.renderResolve(ctx, e.Cfg.Manifest("ate-api-server.yaml"))
+	manifest, err := e.renderResolve(ctx, e.apiServerManifestPath())
 	if err != nil {
 		return err
 	}
@@ -318,6 +318,14 @@ func (e *Env) DeployAteAPIServer(ctx context.Context) error {
 		return err
 	}
 	return e.Kube.RolloutStatus(ctx, kube.KindDeployment, e.Namespace(), "ate-api-server", e.Cfg.RolloutTimeout)
+}
+
+// apiServerManifestPath is the ate-api-server manifest for the environment.
+func (e *Env) apiServerManifestPath() string {
+	if e.Cfg.Kind {
+		return e.Cfg.Manifest("kind", "ate-api-server")
+	}
+	return e.Cfg.Manifest("ate-api-server.yaml")
 }
 
 // DeployAteController redeploys only ate-controller.
@@ -465,12 +473,7 @@ func (e *Env) DeployAtelet(ctx context.Context) error {
 		return err
 	}
 
-	path := e.Cfg.Manifest("atelet.yaml")
-	if e.Cfg.Kind {
-		// The kind overlay patches the DaemonSet for the local node layout.
-		path = e.Cfg.Path(installDir + "/kind/atelet")
-	}
-	manifest, err := e.render(path)
+	manifest, err := e.render(e.ateletManifestPath())
 	if err != nil {
 		return err
 	}
@@ -485,6 +488,14 @@ func (e *Env) DeployAtelet(ctx context.Context) error {
 		return err
 	}
 	return e.waitFakeWorkersync(ctx)
+}
+
+// ateletManifestPath is the atelet manifest for the environment.
+func (e *Env) ateletManifestPath() string {
+	if e.Cfg.Kind {
+		return e.Cfg.Manifest("kind", "atelet")
+	}
+	return e.Cfg.Manifest("atelet.yaml")
 }
 
 // DeployAtenet redeploys the atenet dataplane: router and egress.
