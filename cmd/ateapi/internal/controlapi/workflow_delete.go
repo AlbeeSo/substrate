@@ -145,7 +145,7 @@ func (w *ActorWorkflow) ensureAteletTerminated(ctx context.Context, actorRef res
 				return err
 			}
 			if !hosted {
-				slog.InfoContext(ctx, "worker is no longer assigned to this actor, skipping ateom workload termination",
+				slog.InfoContext(ctx, "worker is no longer assigned to this actor, skipping worker workload termination",
 					slog.String("worker", workerName),
 					slog.Any("actor", actorRef))
 				workerPodUID = ""
@@ -158,7 +158,7 @@ func (w *ActorWorkflow) ensureAteletTerminated(ctx context.Context, actorRef res
 		return fmt.Errorf("while connecting to atelet on node %q: %w", nodeName, err)
 	}
 
-	client := ateletpb.NewAteomHerderClient(conn)
+	client := ateletpb.NewAteletClient(conn)
 
 	var workloadSpec *ateletpb.WorkloadSpec
 	if actorTemplate != nil {
