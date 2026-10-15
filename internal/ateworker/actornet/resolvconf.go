@@ -12,54 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package dns answers an actor's DNS from its sandbox's gateway namespace and
-// writes the resolv.conf that points the actor at it.
-package dns
+package actornet
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io/fs"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
 )
-
-// resolvConfNameservers reads nameservers from resolv.conf as "host:53".
-func resolvConfNameservers(path string) ([]string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("dns: reading resolv.conf: %w", err)
-	}
-	defer f.Close()
-
-	var out []string
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if i := strings.IndexAny(line, "#;"); i >= 0 {
-			line = strings.TrimSpace(line[:i])
-		}
-		rest, ok := strings.CutPrefix(line, "nameserver")
-		if !ok {
-			continue
-		}
-		address := strings.TrimSpace(rest)
-		if address == "" || net.ParseIP(address) == nil {
-			continue
-		}
-		out = append(out, net.JoinHostPort(address, "53"))
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("dns: reading resolv.conf: %w", err)
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("dns: %s names no usable nameserver", path)
-	}
-	return out, nil
-}
 
 // SandboxResolvConf replaces the pod's nameservers with nameserver, the
 // address the sandbox's DNS is served on, while preserving the pod's search
@@ -84,7 +46,7 @@ func SandboxResolvConf(nameserver string, podResolvConf []byte) []byte {
 // os.Root confines path traversal; unlinking prevents writes through existing links.
 func WriteRootfsResolvConf(rootfs string, content []byte) error {
 	if len(content) == 0 {
-		return fmt.Errorf("dns: refusing to write an empty resolv.conf")
+		return fmt.Errorf("refusing to write an empty resolv.conf")
 	}
 	root, err := os.OpenRoot(rootfs)
 	if err != nil {
