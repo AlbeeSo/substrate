@@ -34,10 +34,9 @@ import (
 // the number of workers bounds how much background work runs at once.
 //
 // TODO: Commits record the snapshot they are given without comparing
-// Snapshot.generation, which the control plane does not set yet. Once it
-// does, Checkpoint and PromoteSnapshot should reject a stale generation before
-// doing any work, as Snapshot.generation describes, so that no commit replaces
-// a snapshot with an older one.
+// Snapshot.generation. Checkpoint and PromoteSnapshot should reject a stale
+// generation before doing any work, as Snapshot.generation describes, so that
+// no commit replaces a snapshot with an older one.
 type Tracker struct {
 	// ctx bounds background work, and shuts the queue down when it ends.
 	ctx context.Context

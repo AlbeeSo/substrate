@@ -281,6 +281,7 @@ func runLocalSnapshotGC(t *testing.T, fidelity ateletpb.SnapshotFidelity) {
 		Spec:                  spec,
 		Snapshot: &ateletpb.Snapshot{
 			SnapshotUuid: snapshotName,
+			Generation:   1,
 			Fidelity:     fidelity,
 		},
 	}); err != nil {
@@ -445,6 +446,7 @@ func TestRestoreUsesRequestSandboxAssets(t *testing.T) {
 		Spec:                  spec,
 		Snapshot: &ateletpb.Snapshot{
 			SnapshotUuid: snapshotName,
+			Generation:   1,
 			Fidelity:     ateletpb.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY,
 		},
 		UploadConfig: &ateletpb.UploadConfig{Mode: ateletpb.UploadMode_UPLOAD_MODE_DEFERRED},
@@ -475,6 +477,7 @@ func TestRestoreUsesRequestSandboxAssets(t *testing.T) {
 		Spec:                  spec,
 		Snapshot: &ateletpb.Snapshot{
 			SnapshotUuid: snapshotName,
+			Generation:   1,
 			Fidelity:     ateletpb.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY,
 		},
 	}); err != nil {
@@ -570,6 +573,7 @@ func TestActivationFailureBeforeRegistration(t *testing.T) {
 					SandboxAssets: assets, Spec: spec,
 					Snapshot: &ateletpb.Snapshot{
 						SnapshotUuid: snapshotName,
+						Generation:   1,
 						Fidelity:     ateletpb.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY,
 					},
 				})
@@ -716,6 +720,7 @@ func TestRestoreFailureAfterRegistrationRemovesOwnRegistration(t *testing.T) {
 		Spec: spec,
 		Snapshot: &ateletpb.Snapshot{
 			SnapshotUuid: snapshotName,
+			Generation:   1,
 			Fidelity:     ateletpb.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY,
 		},
 	})
@@ -854,6 +859,7 @@ func TestRestorePrefersLocalAndFallsBackToObjectStorage(t *testing.T) {
 				Spec:                  spec,
 				Snapshot: &ateletpb.Snapshot{
 					SnapshotUuid: snapshotName,
+					Generation:   1,
 					Fidelity:     ateletpb.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY,
 					Object:       &ateletpb.ObjectStorage{SnapshotUri: pausedSnapshotURI},
 				},
@@ -941,6 +947,7 @@ func TestRestoreWithoutUsableLocalCopy(t *testing.T) {
 				Spec:          &ateletpb.WorkloadSpec{},
 				Snapshot: &ateletpb.Snapshot{
 					SnapshotUuid: snapshotName,
+					Generation:   1,
 					Fidelity:     ateletpb.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY,
 					Object:       tc.object,
 				},
@@ -1108,8 +1115,9 @@ func (a *pluginActor) checkpoint(t *testing.T, snap *ateletpb.Snapshot, mode ate
 	})
 }
 
-// restoreLocal resumes the actor from its local snapshot named name.
-func (a *pluginActor) restoreLocal(t *testing.T, name string) {
+// restoreLocal resumes the actor from its local snapshot named name, taken at
+// generation.
+func (a *pluginActor) restoreLocal(t *testing.T, name string, generation int32) {
 	t.Helper()
 	if _, err := a.s.Restore(t.Context(), &ateletpb.RestoreRequest{
 		Atespace:              "ate-demo",
@@ -1120,7 +1128,7 @@ func (a *pluginActor) restoreLocal(t *testing.T, name string) {
 		WorkerPodUid:          pluginWorkerPodUID,
 		SandboxAssets:         a.assets,
 		Spec:                  a.spec,
-		Snapshot:              &ateletpb.Snapshot{SnapshotUuid: name, Fidelity: ateletpb.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY},
+		Snapshot:              &ateletpb.Snapshot{SnapshotUuid: name, Generation: generation, Fidelity: ateletpb.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY},
 	}); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
@@ -1183,7 +1191,7 @@ func TestFailedCheckpointForgetsLocalSnapshot(t *testing.T) {
 	if _, err := a.checkpoint(t, a.snapshot("pause-snap-1", 1), ateletpb.UploadMode_UPLOAD_MODE_DEFERRED); err != nil {
 		t.Fatalf("Checkpoint (pause): %v", err)
 	}
-	a.restoreLocal(t, "pause-snap-1")
+	a.restoreLocal(t, "pause-snap-1", 1)
 
 	a.store.putErr = errors.New("object store unavailable")
 	if _, err := a.checkpoint(t, a.snapshot("suspend-snap-2", 2), ateletpb.UploadMode_UPLOAD_MODE_IMMEDIATE); err == nil {
