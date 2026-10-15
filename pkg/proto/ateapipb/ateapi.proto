@@ -2547,6 +2547,14 @@ service WorkerService {
   // on behalf of a particular actor.
   //
   // SPIFFE URI: spiffe://${trustdomain}/worker-for-actor/${atespace}/${actor}
+  //
+  // atelet calls this with its own client certificate, as it does for
+  // RequestActorSuspend, naming the Worker its caller proved itself to be.
+  // The control plane mints only for the Worker that the Actor is assigned
+  // to, and only to an atelet on that Worker's node. A request from any
+  // other node or Worker gets NotFound; one from the assigned Worker with a
+  // stale actor_uid gets Aborted. Unlike MintWorkerActorJwt, a paused Actor
+  // gets NotFound, since it has no Worker to bind the certificate to.
   rpc MintWorkerActorCertificate(MintWorkerActorCertificateRequest) returns (MintWorkerActorCertificateResponse);
 
   // MintWorkerActorJwt creates a Substrate-issued JWT that asserts a worker
@@ -2655,6 +2663,15 @@ message MintWorkerActorCertificateRequest {
   // +k8s:required
   // +k8s:maxBytes=16384
   bytes certificate_signing_request = 3;
+
+  // The Worker requesting the certificate. atespace is always empty; Workers
+  // are global-scoped. atelet fills this in from its caller's certificate, so
+  // it names the Worker that certificate proves the request came from. It
+  // must be the Worker that the actor is assigned to.
+  //
+  // +k8s:required
+  // +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
+  ObjectRef worker = 4;
 }
 
 // Response message for MintWorkerActorCertificate.
@@ -2714,7 +2731,7 @@ message MintWorkerActorJwtResponse {
 message RequestActorSuspendRequest {
   // The Worker making the request. atespace is always empty; Workers are
   // global-scoped. atelet fills this in from its caller's certificate, so it
-  // names the Worker the request provably came from.
+  // names the Worker that certificate proves the request came from.
   //
   // +k8s:required
   // +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
