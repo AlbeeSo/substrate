@@ -394,15 +394,16 @@ func main() {
 	if _, err := startSandboxAssetPrewarm(ctx, sandboxConfigInformer, wmService, imageCache, microvmNodeCapable(hostDevRoot)); err != nil {
 		slog.ErrorContext(ctx, "Sandbox asset prewarm disabled", slog.Any("err", err))
 	}
-	// Keep a sandbox versions file in each local worker's directory: the
-	// runtime hashes of the enabled versions of its pool's SandboxConfig,
+	// Keep a sandbox runtimes file in each local worker's directory: the
+	// runtimes of the enabled versions of its pool's SandboxConfig,
 	// rewritten when the config changes.
 	if _, err := startWorkerSandboxSyncer(ctx,
 		workerPodFactory.Core().V1().Pods(),
 		ateFactory.Api().V1alpha1().WorkerPools(),
 		ateFactory.Api().V1alpha1().SandboxConfigs(),
+		wmService,
 		nodepath.WorkersDir()); err != nil {
-		slog.ErrorContext(ctx, "Worker sandbox versions syncer disabled", slog.Any("err", err))
+		slog.ErrorContext(ctx, "Worker sandbox runtimes syncer disabled", slog.Any("err", err))
 	}
 	// Start after the informers are registered: a factory only runs
 	// informers that exist when Start is called.

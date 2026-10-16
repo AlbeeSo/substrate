@@ -30,6 +30,7 @@ import (
 	"go.ate.dev/substrate/cmd/ateapi/internal/workercache"
 	"go.ate.dev/substrate/internal/apierror"
 	"go.ate.dev/substrate/internal/ateattr"
+	"go.ate.dev/substrate/internal/hardware"
 	"go.ate.dev/substrate/internal/installdefaults"
 	"go.ate.dev/substrate/internal/preview"
 	"go.ate.dev/substrate/internal/proto/ateletpb"
@@ -2367,7 +2368,7 @@ type relaxingTestScheduler struct {
 }
 
 func (s *relaxingTestScheduler) Schedule(_ context.Context, c scheduling.Constraints) (*ateapipb.Worker, error) {
-	if c.RequiredRuntime != nil {
+	if c.RequiredRuntime.Runtime() != nil {
 		return nil, scheduling.ErrNoCapacity
 	}
 	return s.relaxedWorker, nil
@@ -2683,7 +2684,7 @@ func TestCanRelaxRuntime(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			actor := &ateapipb.Actor{Status: &ateapipb.ActorStatus{Snapshots: tc.snapshots}}
-			if got := canRelaxRuntime(actor, scheduling.Constraints{RequiredRuntime: tc.required}); got != tc.want {
+			if got := canRelaxRuntime(actor, scheduling.Constraints{RequiredRuntime: hardware.NewRequirement(tc.required)}); got != tc.want {
 				t.Errorf("canRelaxRuntime = %v, want %v", got, tc.want)
 			}
 		})
@@ -2694,7 +2695,7 @@ func TestCanRelaxRuntime(t *testing.T) {
 // so the worker's has to reach it.
 func TestWorkerAssignmentFromCopiesSPIFFEID(t *testing.T) {
 	const id = "spiffe://cluster.local/ns/workers/sa/substrate-worker"
-	got := workerAssignmentFrom(&ateapipb.Worker{WorkerSpiffeId: id}, nil)
+	got := workerAssignmentFrom(&ateapipb.Worker{WorkerSpiffeId: id}, hardware.Requirement{})
 	if got.GetWorkerSpiffeId() != id {
 		t.Errorf("worker SPIFFE ID = %q, want %q", got.GetWorkerSpiffeId(), id)
 	}

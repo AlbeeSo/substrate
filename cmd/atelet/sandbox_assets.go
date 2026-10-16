@@ -184,13 +184,19 @@ func (s *Atelet) ensureSandboxAssets(ctx context.Context, rec *sandboxAssetsReco
 	return paths, nil
 }
 
+// runscAssetNames are the assets that carry the gVisor `runsc` binary, most
+// preferred first.
+var runscAssetNames = []string{gvisorAssetName, runscAssetName}
+
 // runscPathFor returns the local path of the gVisor `runsc` binary from a
 // fetched asset-path map, or "" if the runtime has none (e.g. micro-VM).
 func runscPathFor(paths map[string]string) string {
-	if p := paths[gvisorAssetName]; p != "" {
-		return p
+	for _, name := range runscAssetNames {
+		if p := paths[name]; p != "" {
+			return p
+		}
 	}
-	return paths[runscAssetName]
+	return ""
 }
 
 // fetchAsset downloads one content-addressed asset (verifying its sha256) into
