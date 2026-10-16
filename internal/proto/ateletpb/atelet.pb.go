@@ -161,15 +161,18 @@ const (
 	// that is not yet durable was taken. Snapshots superseded before then
 	// are never uploaded.
 	//
-	// Once the actor has stayed suspended on this node for
-	// atelet's detach-delay, atelet detaches it (deletes all the local snapshots).
+	// Once the actor has stayed suspended on this node for atelet's
+	// detach-delay, atelet detaches it: it uploads the latest local snapshot
+	// unless that is durable already, then deletes all the local snapshots. It
+	// never detaches a snapshot it cannot make durable, such as one without
+	// `snapshot.object`.
 	//
-	// TODO: Temporarily the deferred upload and detach are unimplemented. Only a local
-	// copy is taken.
+	// TODO: Temporarily the deferred upload is unimplemented: until the
+	// detach, only PromoteSnapshot uploads the snapshot.
 	UploadMode_UPLOAD_MODE_DEFERRED UploadMode = 1
-	// Upload the snapshot synchronously before Checkpoint returns, while keeping the local copy.
-	//
-	// TODO: Temporarily this deletes the local snapshot after the upload.
+	// Upload the snapshot synchronously before Checkpoint returns, and keep a
+	// local copy if atelet can: failing to store it does not fail the
+	// Checkpoint.
 	UploadMode_UPLOAD_MODE_IMMEDIATE UploadMode = 2 // Keep this in sync with the maximums on fields of this type.
 )
 
@@ -3296,10 +3299,10 @@ func (x *SnapshotReport) GetDurableCompleteTime() *timestamppb.Timestamp {
 // Returned by Checkpoint, PromoteSnapshot, DetachActor.
 type ActorSnapshotState struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The snapshot atelet restores the actor from locally. Unset when the
-	// latest checkpoint kept no local copy, and once a detach has made the
-	// snapshot durable and begun deleting it. Either way, latest_durable is
-	// then the actor's latest snapshot.
+	// The snapshot atelet restores the actor from locally. Unset when an
+	// UPLOAD_MODE_IMMEDIATE checkpoint could not keep a local copy, and once a
+	// detach has made the snapshot durable and begun deleting it. Either way,
+	// latest_durable is then the actor's latest snapshot.
 	LatestLocal *SnapshotReport `protobuf:"bytes,1,opt,name=latest_local,json=latestLocal,proto3" json:"latest_local,omitempty"`
 	// The snapshot an in-flight upload is reading, if any. If it is
 	// latest_local, its local copy stays after the upload. If it is an older
@@ -3574,9 +3577,9 @@ func (x *CheckpointRequest) GetUploadConfig() *UploadConfig {
 type CheckpointResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The actor's state once the checkpoint is taken: latest_local is the new
-	// snapshot, unless UPLOAD_MODE_IMMEDIATE kept no local copy. The control
-	// plane can drop its entries for any local-only generation not named here:
-	// atelet has deleted it, and will never upload it.
+	// snapshot, unless UPLOAD_MODE_IMMEDIATE could not keep a local copy. The
+	// control plane can drop its entries for any local-only generation not
+	// named here: atelet has deleted it, and will never upload it.
 	State         *ActorSnapshotState `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
