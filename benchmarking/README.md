@@ -161,6 +161,33 @@ agent workload. One task is four cycles by default. Each task runs on a fresh ac
 the last cycle finishes, the actor is deleted and the user creates a new one for the next
 task.
 
+#### Sweperf Tasks
+
+Each task is one entry (name, digest-pinned image, step count) in
+`workloads/manifests/sweperf/sweperf-images.json`. Its ActorTemplate, `sweperf-<name>`,
+is generated into `workloads/manifests/sweperf/generated/` and checked in. To add or change
+a task, edit the catalog and regenerate:
+
+```bash
+SWEPERF=benchmarking/workloads/manifests/sweperf
+python3 -m venv "${SWEPERF}/venv" && "${SWEPERF}/venv/bin/pip" install -r "${SWEPERF}/requirements.txt"
+"${SWEPERF}/venv/bin/python" "${SWEPERF}/generate_sweperf_templates.py" '*'
+"${SWEPERF}/venv/bin/python" "${SWEPERF}/generate_sweperf_templates.py" --check   # fail if generated/ is missing or stale
+hack/verify/benchmarking-python.sh   # unit tests, as CI runs them
+```
+
+Deploy a task and the sweperf user class:
+
+```bash
+WORKLOAD_TEMPLATES=sweperf-django-11099 ./benchmarking/workloads/deploy.sh --deploy
+./benchmarking/locust/deploy.sh --deploy --user-class sweperf
+```
+
+Then start the run with `--sweperf-template sweperf-django-11099` and
+`--sweperf-total-steps 15`, set in the Locust web UI or through `LOCUST_SWEPERF_TEMPLATE`
+and `LOCUST_SWEPERF_TOTAL_STEPS`. The client takes the step count from that option, not
+from the template, so it must match the catalog.
+
 #### Sweperf Reported Metrics
 
 All rows are in milliseconds. CEL (command execution latency) is the time the trace commands
