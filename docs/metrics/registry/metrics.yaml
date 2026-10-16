@@ -710,7 +710,7 @@ groups:
         stability: stable
         type: int
         brief: The TCP port of the server that a gRPC client called.
-        examples: [8085]
+        examples: [21998]
 
   # ---------------------------------------------------------------------------
   # Metrics. ateapi
