@@ -262,9 +262,9 @@ func hashVersions(ctx context.Context, plan *sandboxPlan) ([]hashedVersion, erro
 //
 // Listing a runtime does not promise its assets are on the node: probing
 // fetches a gVisor version's runsc the first time this atelet sees it, but
-// not its pause image, and nothing of a microVM version. The prewarmer
-// fetches each config's default version, and Run/Restore fetch any other
-// version on demand.
+// not its pause image, and nothing of a microVM version. The syncer has
+// the default runtime prewarmed once the file is written, and Run/Restore
+// fetch any other version on demand.
 func (s *workerSandboxSyncer) buildFile(ctx context.Context, plan *sandboxPlan, hashed []hashedVersion) (*sandboxruntimes.File, error) {
 	out := &sandboxruntimes.File{}
 	seen := make(map[string]bool, len(hashed))
@@ -364,9 +364,8 @@ func (s *workerSandboxSyncer) gvisorCPUFeatures(ctx context.Context, rec *sandbo
 	if ok {
 		return mask, nil
 	}
-	// A download that hangs would hold a sync worker; prewarmTimeout bounds
-	// the fetch for the same reason it bounds prewarming.
-	ctx, cancel := context.WithTimeout(ctx, prewarmTimeout)
+	// Backstop for the sync worker this runs on; see probeFetchTimeout.
+	ctx, cancel := context.WithTimeout(ctx, probeFetchTimeout)
 	defer cancel()
 	// The probe has no actor to stage the binary for: it links it into a
 	// scratch dir it removes again, and the cache keeps the entry.
@@ -403,6 +402,15 @@ func runscAssetOf(rec *sandboxAssetsRecord) (string, bool) {
 	}
 	return "", false
 }
+
+// probeFetchTimeout bounds the fetch of a runsc binary for its probe, from
+// the first cache lookup to the staged link. The asset cache bounds each
+// download with its own fetch timeout, and the exec below has
+// cpuFeaturesTimeout; this is the backstop for everything around them,
+// such as waiting on a download another caller started, so a probe cannot
+// hold one of the syncer's few workers for longer than one download may
+// take.
+const probeFetchTimeout = 5 * time.Minute
 
 // cpuFeaturesTimeout bounds one `runsc cpu-features` run, which takes
 // milliseconds. A runsc that hangs would hold a sync worker. A var so tests
@@ -478,6 +486,9 @@ func bundleHash(rec *sandboxAssetsRecord, pauseDigest string) string {
 //   - plan: resolve the pool's config and its versions for this node
 //   - hash: hash each version's runtime, and make each resolvable by its
 //     hash before the file can let the worker register it
+//   - prewarm: have the default runtime's assets fetched, off this
+//     goroutine, so the probe below is its head start and the file never
+//     waits on a download
 //   - build: probe what a snapshot taken on each runtime must find again
 //   - write: replace the file if its content changed, then record what
 //     the worker now advertises in the index
@@ -497,6 +508,17 @@ func (s *workerSandboxSyncer) syncPod(ctx context.Context, pod *corev1.Pod) erro
 	// any of them.
 	if err := s.index.registerRuntimes(plan.config, hashed); err != nil {
 		return err
+	}
+	// Queued now rather than after the write: the build fetches and probes
+	// every restorable version serially, longest on a fresh node, and the
+	// file it ends with is what lets the worker take its first actor. The
+	// prewarm gets that whole duration to finish first.
+	if s.prewarm != nil {
+		for _, v := range hashed {
+			if v.isDefault {
+				s.prewarm(v.hash)
+			}
+		}
 	}
 	want, buildErr := s.buildFile(ctx, plan, hashed)
 	if buildErr != nil && !errors.Is(buildErr, errIncomplete) {
