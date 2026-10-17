@@ -29,7 +29,6 @@ import (
 	"syscall"
 	"time"
 
-	"go.ate.dev/substrate/internal/apierror"
 	"go.ate.dev/substrate/internal/workerstats"
 
 	"go.ate.dev/substrate/internal/ateworker/actornet"
@@ -38,6 +37,7 @@ import (
 	"go.ate.dev/substrate/cmd/ateworker-microvm/internal/ch"
 	"go.ate.dev/substrate/cmd/ateworker-microvm/internal/kata"
 	"go.ate.dev/substrate/cmd/ateworker-microvm/internal/third_party/kata/agentpb"
+	"go.ate.dev/substrate/internal/ateworkervalidation"
 	"go.ate.dev/substrate/internal/imagecache"
 	"go.ate.dev/substrate/internal/ocispec"
 	"go.ate.dev/substrate/internal/proto/ateworkerpb"
@@ -161,10 +161,6 @@ const vmmMemReserveMiB = 128
 // binary needs more, and this floor cannot know how much.
 const minGuestMemMiB = 128
 
-// maxActorContainers is a sanity cap on containers per actor (all share the one
-// micro-VM + virtiofsd). 25 is far above any real pod.
-const maxActorContainers = 25
-
 // workloadIDs returns the guest container ids for the actor's containers, in
 // order. Recorded on runningActor so the SIGTERM handler knows which guest
 // workloads to signal and wait on, and it must name what the guest actually
@@ -236,7 +232,7 @@ func (s *AteWorkerService) resolveRuntime(paths map[string]string) resolvedRunti
 //   - Each container's bundle holds the overlay spec its rootfs/ is composed
 //     from. ateworker builds the OCI spec itself.
 func (s *AteWorkerService) RunWorkload(ctx context.Context, req *ateworkerpb.RunWorkloadRequest) (resp *ateworkerpb.RunWorkloadResponse, retErr error) {
-	if err := validateActorDirs(req.GetActorDirs()); err != nil {
+	if err := ateworkervalidation.ValidateRunWorkloadRequest(ctx, req); err != nil {
 		return nil, err
 	}
 	if err := validateRuntimeAssetPaths(req.GetActorUid(), req.GetActorDirs(), req.GetRuntimeAssetPaths()); err != nil {
@@ -386,12 +382,6 @@ func (s *AteWorkerService) coldBootActor(ctx context.Context, p actorBootParams)
 	// CreateContainer/StartContainer, driven below after the shared boot +
 	// CreateSandbox + guest networking.
 	containers := p.containers
-	if len(containers) == 0 {
-		return apierror.InvalidArgument("actor spec has no containers")
-	}
-	if len(containers) > maxActorContainers {
-		return apierror.Unimplemented("ateworker-microvm supports at most %d containers, got %d", maxActorContainers, len(containers))
-	}
 
 	// ateworker builds the CH vm.create itself, so it needs the guest kernel + image
 	// paths directly.
