@@ -427,7 +427,10 @@ type DurabilityMode int32
 
 const (
 	DurabilityMode_DURABILITY_MODE_UNSPECIFIED DurabilityMode = 0
-	// Return only after the snapshot is complete in durable storage.
+	// Return only after the snapshot is complete in durable storage. Applies
+	// only when the call checkpoints a running actor: an actor that is already
+	// SUSPENDED is returned with the snapshot it holds, which may still be on
+	// its node.
 	DurabilityMode_DURABILITY_MODE_SYNCHRONOUS DurabilityMode = 1
 	// Return once the snapshot is captured on the node. The upload to durable
 	// storage continues in the background.
@@ -738,7 +741,9 @@ type Snapshot struct {
 	// +k8s:format=k8s-long-name
 	Locality string `protobuf:"bytes,6,opt,name=locality,proto3" json:"locality,omitempty"`
 	// durable_snapshot holds the durable storage representation of this snapshot.
-	// Unset when the snapshot only exists locally.
+	// PENDING while the snapshot is uploaded, including a pause's snapshot that
+	// so far exists only on the node named by locality. COMPLETED once the
+	// upload is recorded.
 	//
 	// +k8s:optional
 	DurableSnapshot *SnapshotStorage `protobuf:"bytes,7,opt,name=durable_snapshot,json=durableSnapshot,proto3" json:"durable_snapshot,omitempty"`
