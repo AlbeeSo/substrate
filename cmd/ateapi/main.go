@@ -337,6 +337,7 @@ func main() {
 	controlSrv := controlapi.NewRPCService(
 		persistence,
 		workerCache,
+		workerPoolLister,
 		sandboxConfigLister,
 		csiDriverConfigLister,
 		storageClassLister,
