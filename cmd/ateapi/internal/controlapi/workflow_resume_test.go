@@ -30,6 +30,7 @@ import (
 	"go.ate.dev/substrate/cmd/ateapi/internal/workercache"
 	"go.ate.dev/substrate/internal/apierror"
 	"go.ate.dev/substrate/internal/ateattr"
+	"go.ate.dev/substrate/internal/ateinterceptors"
 	"go.ate.dev/substrate/internal/hardware"
 	"go.ate.dev/substrate/internal/installdefaults"
 	"go.ate.dev/substrate/internal/preview"
@@ -1070,6 +1071,8 @@ type capturingAtelet struct {
 	checkpointState *ateletpb.ActorSnapshotState
 	// promoteState is the snapshot state PromoteSnapshot returns.
 	promoteState *ateletpb.ActorSnapshotState
+	// promoteErr, when set, fails PromoteSnapshot after it is recorded.
+	promoteErr error
 }
 
 func (f *capturingAtelet) Restore(ctx context.Context, req *ateletpb.RestoreRequest) (*ateletpb.RestoreResponse, error) {
@@ -1107,6 +1110,9 @@ func (f *capturingAtelet) PromoteSnapshot(ctx context.Context, req *ateletpb.Pro
 	defer f.mu.Unlock()
 	f.promote = proto.Clone(req).(*ateletpb.PromoteSnapshotRequest)
 	f.promotes++
+	if f.promoteErr != nil {
+		return nil, f.promoteErr
+	}
 	return &ateletpb.PromoteSnapshotResponse{State: proto.CloneOf(f.promoteState)}, nil
 }
 
@@ -1167,12 +1173,14 @@ func wireTestAssignment() *ateapipb.WorkerAssignment {
 // newWireCaptureWorkflow builds an ActorWorkflow whose atelet dialer resolves
 // to an in-process capturing fake. The dialer's conn cache is pre-warmed with
 // a bufconn-backed connection for the atelet pod's UID and IP, so
-// DialForAteletOnNode returns it without dialing the pod IP.
+// DialForAteletOnNode returns it without dialing the pod IP. The fake's server
+// runs atelet's interceptor, so its errors reach the workflow with the code
+// atelet would send.
 func newWireCaptureWorkflow(t *testing.T, persistence store.Interface) (*ActorWorkflow, *capturingAtelet) {
 	t.Helper()
 
 	fake := &capturingAtelet{}
-	srv := grpc.NewServer()
+	srv := grpc.NewServer(grpc.UnaryInterceptor(ateinterceptors.InternalServerUnaryInterceptor))
 	ateletpb.RegisterAteletServer(srv, fake)
 	lis := bufconn.Listen(1 << 20)
 	go func() {
