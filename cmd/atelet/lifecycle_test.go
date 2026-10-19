@@ -34,6 +34,7 @@ import (
 	"go.ate.dev/substrate/cmd/atelet/internal/trustbundle"
 	"go.ate.dev/substrate/internal/apierror"
 	"go.ate.dev/substrate/internal/ateattr"
+	"go.ate.dev/substrate/internal/ateinterceptors"
 	"go.ate.dev/substrate/internal/hardware"
 	"go.ate.dev/substrate/internal/nodepath"
 	"go.ate.dev/substrate/internal/proto/ateletpb"
@@ -42,6 +43,7 @@ import (
 	"go.ate.dev/substrate/pkg/api/v1alpha1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"k8s.io/utils/clock"
 	clocktesting "k8s.io/utils/clock/testing"
@@ -1993,7 +1995,7 @@ func TestCheckpointKeepsSnapshotBeingUploaded(t *testing.T) {
 }
 
 // TestCheckpointRejectsStaleGeneration checks that Checkpoint fails with
-// FailedPrecondition when given a generation below the actor's newest snapshot
+// Aborted when given a generation below the actor's newest snapshot
 // or equal to it under another snapshot_uuid, before calling worker, pruning
 // local checkpoints, or changing tracked state.
 func TestCheckpointRejectsStaleGeneration(t *testing.T) {
@@ -2011,9 +2013,13 @@ func TestCheckpointRejectsStaleGeneration(t *testing.T) {
 		a.snapshot("stale-snap-1", 1),
 		a.snapshot("other-snap-2", 2),
 	} {
-		_, err := a.checkpoint(t, stale, ateletpb.UploadMode_UPLOAD_MODE_DEFERRED)
-		if code := apierror.Code(err); code != codes.FailedPrecondition {
-			t.Errorf("Checkpoint(%v) error = %v (code %v), want FailedPrecondition", stale, err, code)
+		_, err := ateinterceptors.InternalServerUnaryInterceptor(t.Context(), nil,
+			&grpc.UnaryServerInfo{FullMethod: ateletpb.Atelet_Checkpoint_FullMethodName},
+			func(context.Context, any) (any, error) {
+				return a.checkpoint(t, stale, ateletpb.UploadMode_UPLOAD_MODE_DEFERRED)
+			})
+		if code := status.Code(err); code != codes.Aborted {
+			t.Errorf("Checkpoint(%v) error = %v (code %v), want Aborted", stale, err, code)
 		}
 		if got := a.worker.actorDirs["CheckpointWorkload"]; got != nil {
 			t.Errorf("Checkpoint(%v) called worker.CheckpointWorkload (%v), want rejected before worker", stale, got)
@@ -2028,7 +2034,7 @@ func TestCheckpointRejectsStaleGeneration(t *testing.T) {
 }
 
 // TestPromoteSnapshotRejectsStaleGeneration checks that PromoteSnapshot fails
-// with FailedPrecondition when given a generation below the actor's newest
+// with Aborted when given a generation below the actor's newest
 // snapshot or equal to it under another snapshot_uuid, before uploading to
 // object storage, pruning local checkpoints, or changing tracked state.
 func TestPromoteSnapshotRejectsStaleGeneration(t *testing.T) {
@@ -2051,16 +2057,19 @@ func TestPromoteSnapshotRejectsStaleGeneration(t *testing.T) {
 			Fidelity:      "MEMORY",
 		}, map[string]string{"checkpoint.img": "stale-memory"})
 
-		_, err := a.s.PromoteSnapshot(t.Context(), &ateletpb.PromoteSnapshotRequest{
+		req := &ateletpb.PromoteSnapshotRequest{
 			Atespace:              "ate-demo",
 			ActorName:             "counter",
 			ActorUid:              pluginActorUID,
 			ActorTemplateAtespace: "default",
 			ActorTemplateName:     "counter",
 			Snapshot:              stale,
-		})
-		if code := apierror.Code(err); code != codes.FailedPrecondition {
-			t.Errorf("PromoteSnapshot(%v) error = %v (code %v), want FailedPrecondition", stale, err, code)
+		}
+		_, err := ateinterceptors.InternalServerUnaryInterceptor(t.Context(), req,
+			&grpc.UnaryServerInfo{FullMethod: ateletpb.Atelet_PromoteSnapshot_FullMethodName},
+			func(ctx context.Context, _ any) (any, error) { return a.s.PromoteSnapshot(ctx, req) })
+		if code := status.Code(err); code != codes.Aborted {
+			t.Errorf("PromoteSnapshot(%v) error = %v (code %v), want Aborted", stale, err, code)
 		}
 		if got := a.store.keys(); len(got) != 0 {
 			t.Errorf("objects after rejected PromoteSnapshot(%v) = %v, want nothing uploaded", stale, got)
@@ -2076,7 +2085,7 @@ func TestPromoteSnapshotRejectsStaleGeneration(t *testing.T) {
 
 // TestCheckpointInFlightRejectsOlderGeneration checks that while Checkpoint is
 // running on the worker for generation 3, an out-of-order Checkpoint or
-// PromoteSnapshot for generation 2 fails with FailedPrecondition.
+// PromoteSnapshot for generation 2 fails with Aborted.
 func TestCheckpointInFlightRejectsOlderGeneration(t *testing.T) {
 	a := runPluginActor(t)
 	started := make(chan struct{})
@@ -2101,8 +2110,8 @@ func TestCheckpointInFlightRejectsOlderGeneration(t *testing.T) {
 	}
 
 	stale := a.snapshot("pause-snap-2", 2)
-	if _, err := a.checkpoint(t, stale, ateletpb.UploadMode_UPLOAD_MODE_DEFERRED); apierror.Code(err) != codes.FailedPrecondition {
-		t.Errorf("Checkpoint(%v) while generation 3 is in flight = %v, want FailedPrecondition", stale, err)
+	if _, err := a.checkpoint(t, stale, ateletpb.UploadMode_UPLOAD_MODE_DEFERRED); apierror.Code(err) != codes.Aborted {
+		t.Errorf("Checkpoint(%v) while generation 3 is in flight = %v, want Aborted", stale, err)
 	}
 	if _, err := a.s.PromoteSnapshot(t.Context(), &ateletpb.PromoteSnapshotRequest{
 		Atespace:              "ate-demo",
@@ -2111,8 +2120,8 @@ func TestCheckpointInFlightRejectsOlderGeneration(t *testing.T) {
 		ActorTemplateAtespace: "default",
 		ActorTemplateName:     "counter",
 		Snapshot:              stale,
-	}); apierror.Code(err) != codes.FailedPrecondition {
-		t.Errorf("PromoteSnapshot(%v) while generation 3 is in flight = %v, want FailedPrecondition", stale, err)
+	}); apierror.Code(err) != codes.Aborted {
+		t.Errorf("PromoteSnapshot(%v) while generation 3 is in flight = %v, want Aborted", stale, err)
 	}
 
 	close(release)
