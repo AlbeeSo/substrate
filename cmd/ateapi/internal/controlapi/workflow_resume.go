@@ -261,18 +261,9 @@ func (w *ActorWorkflow) ensureVolumesCreated(ctx context.Context, actorRef resou
 	return storedActor, nil
 }
 
-// ensureWorkerAssigned leaves the actor RESUMING with a validated, live,
-// owned, and eligible worker.
-//
-// A RESUMING actor was assigned by a previous attempt: its persisted
-// assignment is revalidated (worker still exists, not draining, still owned
-// by this actor UID, still eligible for the actor's constraints) and reused;
-// a stale assignment crashes the actor. A SUSPENDED actor goes through
-// scheduling (pinned to its assigned node when it holds a node-local
-// snapshot), claiming the worker and persisting RESUMING with the
-// assignment. A version conflict there is retried under a bounded backoff
-// only after re-reading the actor and revalidating it can still be resumed —
-// the conflicting writer may have crashed, drained, or deleted it.
+// ensureWorkerAssigned assigns a worker and leaves the actor RESUMING.
+// Re-entry validates the recorded assignment before reuse.
+// Version conflicts re-read the actor before retrying.
 func (w *ActorWorkflow) ensureWorkerAssigned(ctx context.Context, actorRef resources.ActorRef, actor *ateapipb.Actor, actorTemplate *ateapipb.ActorTemplate) (_ *ateapipb.Actor, _ *ateapipb.Worker, err error) {
 	ctx, done := stepSpan(ctx, "AssignWorker")
 	defer func() { err = done(err) }()
@@ -649,8 +640,6 @@ func toAteletSandboxRuntime(in *ateapipb.SandboxRuntime) *ateletpb.SandboxRuntim
 
 func schedulingConstraints(actor *ateapipb.Actor, tmpl *ateapipb.ActorTemplate) scheduling.Constraints {
 	var requiredNodes []string
-	// A suspended Actor with a local snapshot stays pinned to its node until
-	// atelet detaches it. When the node is full, ResumeActor detaches it.
 	if node := actor.GetStatus().GetAssignedNode(); node != "" {
 		requiredNodes = []string{node}
 	}
@@ -709,18 +698,20 @@ func requiredSnapshotRuntime(actor *ateapipb.Actor, tmpl *ateapipb.ActorTemplate
 	return nil
 }
 
-// canRelaxRuntime reports whether a resume may drop its RequiredRuntime
-// constraint and fall back to restoring without memory state when no
-// runtime-compatible worker has capacity. A local pause checkpoint is not
-// relaxed: the resume stays pinned to its node, the local restore has no
-// fidelity downgrade, and nothing invalidates the checkpoint files if the actor
-// boots elsewhere. The pin lifts once atelet uploads the checkpoint and
-// detaches it from the node.
+// canRelaxRuntime reports whether scheduling may drop its runtime requirement.
 func canRelaxRuntime(actor *ateapipb.Actor, constraints scheduling.Constraints) bool {
 	if constraints.RequiredRuntime.Runtime() == nil {
 		return false
 	}
-	return findLatestLocalSnapshot(actor.GetStatus()) == nil
+	status := actor.GetStatus()
+	local := findLatestLocalSnapshot(status)
+	if local == nil {
+		return true
+	}
+	if status.GetState() == ateapipb.ActorState_ACTOR_STATE_SUSPENDED && status.GetAssignedNode() != "" {
+		return false
+	}
+	return local.GetDurableSnapshot().GetStatus() == ateapipb.SnapshotStorageStatus_SNAPSHOT_STORAGE_STATUS_COMPLETED
 }
 
 // appliesWithFallback reports whether worker satisfies constraints, or — when
@@ -808,8 +799,12 @@ func (w *ActorWorkflow) ensureAteletRestored(ctx context.Context, actorRef resou
 		tele.SnapshotKind = ateattr.SnapshotKindLocal
 
 		fidelity := fidelityToAtelet(localSnap.GetFidelity())
-		if templateReplaced(localSnap, actorTemplate) {
+		switch {
+		case templateReplaced(localSnap, actorTemplate):
 			fidelity = ateletpb.SnapshotFidelity_SNAPSHOT_FIDELITY_VOLUMES
+		case runtimeIncompatible:
+			logRuntimeFallback(ctx, actorRef, assignment, src.RequiredRuntime)
+			fidelity = ateletpb.SnapshotFidelity_SNAPSHOT_FIDELITY_ROOTFS
 		}
 		req := &ateletpb.RestoreRequest{
 			WorkerPodUid:          assignment.GetWorkerPodUid(),
