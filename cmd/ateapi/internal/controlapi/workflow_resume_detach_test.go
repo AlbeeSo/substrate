@@ -422,7 +422,6 @@ func TestResumeActor_DetachesFromFullNode(t *testing.T) {
 				a.Status.LastAssignedGeneration = 1
 				a.Status.Snapshots = []*ateapipb.Snapshot{proto.CloneOf(snap)}
 			})
-
 			w, atelet := newDetachTestWorkflow(t, ctx, st)
 			addAteletOnNode(t, w, "node-2")
 			atelet.detachState = detachedState(snap)
@@ -452,7 +451,12 @@ func TestResumeActor_DetachesFromFullNode(t *testing.T) {
 				SnapshotUuid: snap.GetUuid(),
 				Generation:   snap.GetGeneration(),
 				Fidelity:     ateletpb.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY,
-				Object:       &ateletpb.ObjectStorage{SnapshotUri: snap.GetDurableSnapshot().GetObject().GetSnapshotUri()},
+				// The actor's own snapshot, so private, whether atelet
+				// downloads it or restores the local copy.
+				Object: &ateletpb.ObjectStorage{
+					SnapshotUri: snap.GetDurableSnapshot().GetObject().GetSnapshotUri(),
+					Sharing:     ateletpb.SnapshotSharing_SNAPSHOT_SHARING_PRIVATE,
+				},
 			}
 			if !proto.Equal(restore.GetSnapshot(), want) {
 				t.Errorf("Restore snapshot = %v, want %v", restore.GetSnapshot(), want)
