@@ -209,7 +209,7 @@ func TestAssignWorkerAttempt_SkipsWorkerAssignedInOtherAtespace(t *testing.T) {
 		Status: &ateapipb.WorkerStatus{
 			State:          ateapipb.WorkerState_WORKER_STATE_ACTIVE,
 			Capacity:       &ateapipb.WorkerResources{Actors: 1},
-			DefaultRuntime: testSandboxRuntime(),
+			SandboxClasses: workerSandboxClasses(testSandboxRuntime()),
 		},
 	}
 	if _, err := persistence.CreateWorker(ctx, worker); err != nil {
@@ -271,7 +271,7 @@ func TestAssignWorkerAttempt_ReleasesIneligibleStaleWorker(t *testing.T) {
 		Status: &ateapipb.WorkerStatus{
 			State:          ateapipb.WorkerState_WORKER_STATE_ACTIVE,
 			Capacity:       &ateapipb.WorkerResources{Actors: 1},
-			DefaultRuntime: testSandboxRuntime(),
+			SandboxClasses: workerSandboxClasses(testSandboxRuntime()),
 		},
 	}
 	free := &ateapipb.Worker{
@@ -285,7 +285,7 @@ func TestAssignWorkerAttempt_ReleasesIneligibleStaleWorker(t *testing.T) {
 		Status: &ateapipb.WorkerStatus{
 			State:          ateapipb.WorkerState_WORKER_STATE_ACTIVE,
 			Capacity:       &ateapipb.WorkerResources{Actors: 1},
-			DefaultRuntime: testSandboxRuntime(),
+			SandboxClasses: workerSandboxClasses(testSandboxRuntime()),
 		},
 	}
 	for _, w := range []*ateapipb.Worker{stale, free} {
@@ -345,7 +345,7 @@ func TestAssignWorkerAttempt_RetryAfterConflictPicksFreshWorker(t *testing.T) {
 		Status: &ateapipb.WorkerStatus{
 			State:          ateapipb.WorkerState_WORKER_STATE_ACTIVE,
 			Capacity:       &ateapipb.WorkerResources{Actors: 1},
-			DefaultRuntime: wantRuntime,
+			SandboxClasses: workerSandboxClasses(wantRuntime),
 		},
 	}
 	fallback := &ateapipb.Worker{
@@ -358,7 +358,7 @@ func TestAssignWorkerAttempt_RetryAfterConflictPicksFreshWorker(t *testing.T) {
 		Status: &ateapipb.WorkerStatus{
 			State:          ateapipb.WorkerState_WORKER_STATE_ACTIVE,
 			Capacity:       &ateapipb.WorkerResources{Actors: 1},
-			DefaultRuntime: wantRuntime,
+			SandboxClasses: workerSandboxClasses(wantRuntime),
 		},
 	}
 	for _, w := range []*ateapipb.Worker{contested, fallback} {
@@ -453,7 +453,7 @@ func seedAssignFixture(t *testing.T, ctx context.Context, persistence store.Inte
 		Status: &ateapipb.WorkerStatus{
 			State:          ateapipb.WorkerState_WORKER_STATE_ACTIVE,
 			Capacity:       &ateapipb.WorkerResources{Actors: 1},
-			DefaultRuntime: testSandboxRuntime(),
+			SandboxClasses: workerSandboxClasses(testSandboxRuntime()),
 		},
 	}); err != nil {
 		t.Fatalf("CreateWorker: %v", err)
@@ -762,10 +762,10 @@ func TestValidateAssignedWorker(t *testing.T) {
 	activeStatus := &ateapipb.WorkerStatus{
 		State:          ateapipb.WorkerState_WORKER_STATE_ACTIVE,
 		Capacity:       &ateapipb.WorkerResources{Actors: 1},
-		DefaultRuntime: testSandboxRuntime(),
+		SandboxClasses: workerSandboxClasses(testSandboxRuntime()),
 	}
-	drainingStatus := &ateapipb.WorkerStatus{State: ateapipb.WorkerState_WORKER_STATE_DRAINING, Capacity: &ateapipb.WorkerResources{Actors: 1}, DefaultRuntime: testSandboxRuntime()}
-	unavailableStatus := &ateapipb.WorkerStatus{State: ateapipb.WorkerState_WORKER_STATE_UNAVAILABLE, Capacity: &ateapipb.WorkerResources{Actors: 1}, DefaultRuntime: testSandboxRuntime()}
+	drainingStatus := &ateapipb.WorkerStatus{State: ateapipb.WorkerState_WORKER_STATE_DRAINING, Capacity: &ateapipb.WorkerResources{Actors: 1}, SandboxClasses: workerSandboxClasses(testSandboxRuntime())}
+	unavailableStatus := &ateapipb.WorkerStatus{State: ateapipb.WorkerState_WORKER_STATE_UNAVAILABLE, Capacity: &ateapipb.WorkerResources{Actors: 1}, SandboxClasses: workerSandboxClasses(testSandboxRuntime())}
 
 	tests := []struct {
 		name string
@@ -1302,7 +1302,7 @@ func TestResumeActor_AteletWireRequest(t *testing.T) {
 	localSnap := func(name string, fidelity ateapipb.SnapshotFidelity) *ateapipb.Snapshot {
 		return newPausedSnapshot(t, 1, fidelity, "", name, "node-1")
 	}
-	stampedLocalSnap := func(name string, fidelity ateapipb.SnapshotFidelity, rt *ateapipb.SandboxRuntime) *ateapipb.Snapshot {
+	stampedLocalSnap := func(name string, fidelity ateapipb.SnapshotFidelity, rt *ateapipb.ActorSandboxRuntime) *ateapipb.Snapshot {
 		snap := localSnap(name, fidelity)
 		snap.SandboxRuntime = rt
 		return snap
@@ -1339,7 +1339,7 @@ func TestResumeActor_AteletWireRequest(t *testing.T) {
 		// sourceTag seeds Actor.SourceTag when testing explicit tag clones.
 		sourceTag *ateapipb.ObjectRef
 		// assignedRuntime seeds WorkerAssignment.SandboxRuntime.
-		assignedRuntime *ateapipb.SandboxRuntime
+		assignedRuntime *ateapipb.ActorSandboxRuntime
 	}
 	// templateSeed is the ActorTemplate configuration a row persists.
 	type templateSeed struct {
@@ -1363,7 +1363,7 @@ func TestResumeActor_AteletWireRequest(t *testing.T) {
 
 	amd64RT := testSandboxRuntime()
 	arm64RT := testRuntime("arm64", "")
-	wantAteletRuntime := map[*ateapipb.SandboxRuntime]*ateletpb.SandboxRuntime{
+	wantAteletRuntime := map[*ateapipb.ActorSandboxRuntime]*ateletpb.ActorSandboxRuntime{
 		amd64RT: {
 			SandboxClass: "gvisor",
 			Version: &ateletpb.VersionedSandboxCompat{
@@ -1379,7 +1379,7 @@ func TestResumeActor_AteletWireRequest(t *testing.T) {
 			},
 		},
 	}
-	stampedExtSnap := func(owner ateapipb.SnapshotOwner, uri string, fidelity ateapipb.SnapshotFidelity, rt *ateapipb.SandboxRuntime) *ateapipb.Snapshot {
+	stampedExtSnap := func(owner ateapipb.SnapshotOwner, uri string, fidelity ateapipb.SnapshotFidelity, rt *ateapipb.ActorSandboxRuntime) *ateapipb.Snapshot {
 		snap := newDurableSnapshot(1, owner, fidelity, "", durableSnapshotName, uri, ateapipb.SnapshotStorageStatus_SNAPSHOT_STORAGE_STATUS_COMPLETED)
 		snap.SandboxRuntime = rt
 		return snap
@@ -1867,7 +1867,7 @@ func TestResumeActor_AteletWireRequest(t *testing.T) {
 					t.Fatalf("atelet requests = (restore=%v, run=%v), want exactly one Run", restore, run)
 				}
 				if !proto.Equal(run.GetSandboxRuntime(), wantSandboxRuntime) {
-					t.Errorf("run SandboxRuntime = %v, want %v", run.GetSandboxRuntime(), wantSandboxRuntime)
+					t.Errorf("run ActorSandboxRuntime = %v, want %v", run.GetSandboxRuntime(), wantSandboxRuntime)
 				}
 				return
 			}
@@ -1875,7 +1875,7 @@ func TestResumeActor_AteletWireRequest(t *testing.T) {
 				t.Fatalf("atelet requests = (restore=%v, run=%v), want exactly one Restore", restore, run)
 			}
 			if !proto.Equal(restore.GetSandboxRuntime(), wantSandboxRuntime) {
-				t.Errorf("restore SandboxRuntime = %v, want %v", restore.GetSandboxRuntime(), wantSandboxRuntime)
+				t.Errorf("restore ActorSandboxRuntime = %v, want %v", restore.GetSandboxRuntime(), wantSandboxRuntime)
 			}
 			if got := restore.GetSnapshot().GetSnapshotUuid(); got != tt.want.snapshotName {
 				t.Errorf("Snapshot.SnapshotUuid = %q, want %q", got, tt.want.snapshotName)
@@ -2187,7 +2187,7 @@ func contendedWorker(podName string) *ateapipb.Worker {
 		Status: &ateapipb.WorkerStatus{
 			State:          ateapipb.WorkerState_WORKER_STATE_ACTIVE,
 			Capacity:       &ateapipb.WorkerResources{Actors: 1},
-			DefaultRuntime: testSandboxRuntime(),
+			SandboxClasses: workerSandboxClasses(testSandboxRuntime()),
 		},
 	}
 }
@@ -2459,29 +2459,41 @@ func TestEnsureWorkerAssigned_ContextEndsInsideAttemptRecordsOne(t *testing.T) {
 	}
 }
 
-// testRuntime is a gvisor SandboxRuntime for arch under compatibility schema
+// testRuntime is a gvisor ActorSandboxRuntime for arch under compatibility schema
 // v1. A non-empty bundleHash adds a sandbox_bundle_hash attribute, so two
 // runtimes can share an architecture and still differ, as two versions of
 // one SandboxConfig do.
-func testRuntime(arch, bundleHash string) *ateapipb.SandboxRuntime {
+func testRuntime(arch, bundleHash string) *ateapipb.ActorSandboxRuntime {
 	attrs := []*ateapipb.AttributeEntry{{Key: "architecture", Value: arch}}
 	if bundleHash != "" {
 		attrs = append(attrs, &ateapipb.AttributeEntry{Key: hardware.AttrSandboxBundleHash, Value: bundleHash})
 	}
-	return &ateapipb.SandboxRuntime{
+	return &ateapipb.ActorSandboxRuntime{
 		SandboxClass: "gvisor",
 		Version:      &ateapipb.VersionedSandboxCompat{SchemaVersion: "v1", Attributes: attrs},
 	}
 }
 
 // testSandboxRuntime is the amd64 gvisor runtime most tests report and stamp.
-func testSandboxRuntime() *ateapipb.SandboxRuntime {
+func testSandboxRuntime() *ateapipb.ActorSandboxRuntime {
 	return testRuntime("amd64", "")
+}
+
+// workerSandboxClasses is the sandbox_classes a worker reports to run def as
+// its default runtime and restore restorable beyond it, all of def's class.
+// The arguments are the ActorSandboxRuntimes a test also stamps snapshots and
+// assignments with, so both sides of a match derive from one value.
+func workerSandboxClasses(def *ateapipb.ActorSandboxRuntime, restorable ...*ateapipb.ActorSandboxRuntime) []*ateapipb.WorkerSandboxClass {
+	class := &ateapipb.WorkerSandboxClass{SandboxClass: def.GetSandboxClass(), DefaultRuntime: &ateapipb.WorkerSandboxRuntime{Version: def.GetVersion()}}
+	for _, r := range restorable {
+		class.RestorableRuntimes = append(class.RestorableRuntimes, &ateapipb.WorkerSandboxRuntime{Version: r.GetVersion()})
+	}
+	return []*ateapipb.WorkerSandboxClass{class}
 }
 
 // seedRuntimeWorker stores an ACTIVE gvisor worker on node with room for one
 // actor, reporting def as its default runtime and restorable beyond it.
-func seedRuntimeWorker(t *testing.T, ctx context.Context, st store.Interface, pod, node string, def *ateapipb.SandboxRuntime, restorable ...*ateapipb.SandboxRuntime) *ateapipb.Worker {
+func seedRuntimeWorker(t *testing.T, ctx context.Context, st store.Interface, pod, node string, def *ateapipb.ActorSandboxRuntime, restorable ...*ateapipb.ActorSandboxRuntime) *ateapipb.Worker {
 	t.Helper()
 	worker, err := st.CreateWorker(ctx, &ateapipb.Worker{
 		Metadata:        &ateapipb.ResourceMetadata{Name: testWorkerUID(pod)},
@@ -2491,10 +2503,9 @@ func seedRuntimeWorker(t *testing.T, ctx context.Context, st store.Interface, po
 		WorkerPodUid:    testWorkerUID(pod),
 		NodeName:        node,
 		Status: &ateapipb.WorkerStatus{
-			State:              ateapipb.WorkerState_WORKER_STATE_ACTIVE,
-			Capacity:           &ateapipb.WorkerResources{Actors: 1},
-			DefaultRuntime:     def,
-			RestorableRuntimes: restorable,
+			State:          ateapipb.WorkerState_WORKER_STATE_ACTIVE,
+			Capacity:       &ateapipb.WorkerResources{Actors: 1},
+			SandboxClasses: workerSandboxClasses(def, restorable...),
 		},
 	})
 	if err != nil {
@@ -2505,7 +2516,7 @@ func seedRuntimeWorker(t *testing.T, ctx context.Context, st store.Interface, po
 
 // durableMemorySnapshot is a completed, actor-owned MEMORY snapshot of
 // generation 1 under team-a/id1's own prefix, stamped with runtime.
-func durableMemorySnapshot(t *testing.T, runtime *ateapipb.SandboxRuntime) *ateapipb.Snapshot {
+func durableMemorySnapshot(t *testing.T, runtime *ateapipb.ActorSandboxRuntime) *ateapipb.Snapshot {
 	t.Helper()
 	snap := newDurableSnapshot(1, ateapipb.SnapshotOwner_SNAPSHOT_OWNER_ACTOR, ateapipb.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY, "", "snap-1", someActorSnapshotURI(t, testStorageLocation, "team-a", "snap-1"), ateapipb.SnapshotStorageStatus_SNAPSHOT_STORAGE_STATUS_COMPLETED)
 	snap.SandboxRuntime = runtime
@@ -2526,12 +2537,12 @@ func seedMicroVMWorker(t *testing.T, ctx context.Context, st store.Interface, po
 		Status: &ateapipb.WorkerStatus{
 			State:    ateapipb.WorkerState_WORKER_STATE_ACTIVE,
 			Capacity: &ateapipb.WorkerResources{Actors: 1},
-			DefaultRuntime: &ateapipb.SandboxRuntime{
+			SandboxClasses: []*ateapipb.WorkerSandboxClass{{
 				SandboxClass: "microvm",
-				Version: &ateapipb.VersionedSandboxCompat{SchemaVersion: "v1", Attributes: []*ateapipb.AttributeEntry{
+				DefaultRuntime: &ateapipb.WorkerSandboxRuntime{Version: &ateapipb.VersionedSandboxCompat{SchemaVersion: "v1", Attributes: []*ateapipb.AttributeEntry{
 					{Key: "architecture", Value: "amd64"},
-				}},
-			},
+				}}},
+			}},
 		},
 	})
 	if err != nil {
@@ -2571,7 +2582,7 @@ func newSchedulingWorkflow(t *testing.T, ctx context.Context, st store.Interface
 
 // assertAssignedRuntime checks the runtime recorded on actor's assignment,
 // which is what its next checkpoint will be stamped with.
-func assertAssignedRuntime(t *testing.T, actor *ateapipb.Actor, want *ateapipb.SandboxRuntime) {
+func assertAssignedRuntime(t *testing.T, actor *ateapipb.Actor, want *ateapipb.ActorSandboxRuntime) {
 	t.Helper()
 	if diff := cmp.Diff(want, actor.GetStatus().GetWorkerAssignment().GetSandboxRuntime(), protocmp.Transform()); diff != "" {
 		t.Errorf("WorkerAssignment.SandboxRuntime mismatch (-want +got):\n%s", diff)
@@ -2734,7 +2745,7 @@ func TestAssignWorkerAttempt_PrefersRuntimeMatchingWorkerAndFallsBack(t *testing
 		// scheduler hands back still does.
 		fresh := seedRuntimeWorker(t, ctx, st, "amd-pod", "node-amd", newDefaultRT)
 		stale := proto.CloneOf(fresh)
-		stale.Status.RestorableRuntimes = []*ateapipb.SandboxRuntime{oldRestorableRT}
+		stale.Status.SandboxClasses = workerSandboxClasses(newDefaultRT, oldRestorableRT)
 		actor := seedActorWithSnapshot(t, ctx, st, suspended, "", durableMemorySnapshot(t, oldRestorableRT))
 
 		w := &ActorWorkflow{store: st, scheduler: &relaxingTestScheduler{Scheduler: scheduling.New(nil), relaxedWorker: stale}}
@@ -2743,8 +2754,8 @@ func TestAssignWorkerAttempt_PrefersRuntimeMatchingWorkerAndFallsBack(t *testing
 			t.Fatalf("assignWorkerAttempt: %v", err)
 		}
 		assertAssignedRuntime(t, stored, newDefaultRT)
-		if got := bound.GetStatus().GetRestorableRuntimes(); len(got) != 0 {
-			t.Errorf("returned worker RestorableRuntimes = %v, want the fresh row's none", got)
+		if diff := cmp.Diff(fresh.GetStatus().GetSandboxClasses(), bound.GetStatus().GetSandboxClasses(), protocmp.Transform()); diff != "" {
+			t.Errorf("returned worker SandboxClasses mismatch, want the fresh row's (-fresh +got):\n%s", diff)
 		}
 	})
 }
@@ -2848,12 +2859,12 @@ func TestRequiredSnapshotRuntime(t *testing.T) {
 	completed := ateapipb.SnapshotStorageStatus_SNAPSHOT_STORAGE_STATUS_COMPLETED
 	pending := ateapipb.SnapshotStorageStatus_SNAPSHOT_STORAGE_STATUS_PENDING
 
-	durable := func(gen int32, fidelity ateapipb.SnapshotFidelity, capturedUnder string, status ateapipb.SnapshotStorageStatus, rt *ateapipb.SandboxRuntime) *ateapipb.Snapshot {
+	durable := func(gen int32, fidelity ateapipb.SnapshotFidelity, capturedUnder string, status ateapipb.SnapshotStorageStatus, rt *ateapipb.ActorSandboxRuntime) *ateapipb.Snapshot {
 		snap := newDurableSnapshot(gen, ateapipb.SnapshotOwner_SNAPSHOT_OWNER_ACTOR, fidelity, capturedUnder, "snap", "gs://bucket/snap", status)
 		snap.SandboxRuntime = rt
 		return snap
 	}
-	local := func(gen int32, fidelity ateapipb.SnapshotFidelity, capturedUnder string, rt *ateapipb.SandboxRuntime) *ateapipb.Snapshot {
+	local := func(gen int32, fidelity ateapipb.SnapshotFidelity, capturedUnder string, rt *ateapipb.ActorSandboxRuntime) *ateapipb.Snapshot {
 		snap := newPausedSnapshot(t, gen, fidelity, capturedUnder, "local", "node-1")
 		snap.SandboxRuntime = rt
 		return snap
@@ -2862,7 +2873,7 @@ func TestRequiredSnapshotRuntime(t *testing.T) {
 	tests := []struct {
 		name      string
 		snapshots []*ateapipb.Snapshot
-		want      *ateapipb.SandboxRuntime
+		want      *ateapipb.ActorSandboxRuntime
 	}{
 		{name: "no snapshot cold-boots unconstrained"},
 		{
@@ -2989,7 +3000,7 @@ func seedVolumeAssignFixture(t *testing.T, ctx context.Context, persistence stor
 		Status: &ateapipb.WorkerStatus{
 			State:          ateapipb.WorkerState_WORKER_STATE_ACTIVE,
 			Capacity:       &ateapipb.WorkerResources{Actors: 1},
-			DefaultRuntime: testSandboxRuntime(),
+			SandboxClasses: workerSandboxClasses(testSandboxRuntime()),
 		},
 	}); err != nil {
 		t.Fatalf("CreateWorker: %v", err)
@@ -3136,7 +3147,7 @@ func TestCanRelaxRuntime(t *testing.T) {
 		state     ateapipb.ActorState
 		node      string
 		snapshots []*ateapipb.Snapshot
-		required  *ateapipb.SandboxRuntime
+		required  *ateapipb.ActorSandboxRuntime
 		want      bool
 	}{
 		{
@@ -3236,18 +3247,18 @@ func TestWorkerAssignmentFromCopiesSPIFFEID(t *testing.T) {
 func TestToAteletSandboxRuntime(t *testing.T) {
 	tests := []struct {
 		name string
-		in   *ateapipb.SandboxRuntime
-		want *ateletpb.SandboxRuntime
+		in   *ateapipb.ActorSandboxRuntime
+		want *ateletpb.ActorSandboxRuntime
 	}{
 		{name: "nil"},
 		{
 			name: "class only",
-			in:   &ateapipb.SandboxRuntime{SandboxClass: "gvisor"},
-			want: &ateletpb.SandboxRuntime{SandboxClass: "gvisor"},
+			in:   &ateapipb.ActorSandboxRuntime{SandboxClass: "gvisor"},
+			want: &ateletpb.ActorSandboxRuntime{SandboxClass: "gvisor"},
 		},
 		{
 			name: "full",
-			in: &ateapipb.SandboxRuntime{
+			in: &ateapipb.ActorSandboxRuntime{
 				SandboxClass: "gvisor",
 				Version: &ateapipb.VersionedSandboxCompat{
 					SchemaVersion: "v1",
@@ -3257,7 +3268,7 @@ func TestToAteletSandboxRuntime(t *testing.T) {
 					},
 				},
 			},
-			want: &ateletpb.SandboxRuntime{
+			want: &ateletpb.ActorSandboxRuntime{
 				SandboxClass: "gvisor",
 				Version: &ateletpb.VersionedSandboxCompat{
 					SchemaVersion: "v1",
