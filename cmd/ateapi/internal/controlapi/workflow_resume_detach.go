@@ -23,6 +23,7 @@ import (
 	"go.ate.dev/substrate/cmd/ateapi/internal/scheduling"
 	"go.ate.dev/substrate/cmd/ateapi/internal/store"
 	"go.ate.dev/substrate/internal/apierror"
+	"go.ate.dev/substrate/internal/ateattr"
 	"go.ate.dev/substrate/internal/hardware"
 	"go.ate.dev/substrate/internal/proto/ateletpb"
 	"go.ate.dev/substrate/internal/resources"
@@ -42,6 +43,7 @@ func shouldDetachFromNode(actor *ateapipb.Actor, assignErr error) bool {
 
 // detachFromFullNode releases the node binding so scheduling can retry.
 // Unreachable nodes can be forgotten when the latest local snapshot is durable.
+// A deleted node crashes the actor when that snapshot is not durable.
 func (w *ActorWorkflow) detachFromFullNode(ctx context.Context, actorRef resources.ActorRef, actor *ateapipb.Actor, actorTemplate *ateapipb.ActorTemplate, assignErr error) (_ *ateapipb.Actor, err error) {
 	ctx, done := stepSpan(ctx, "DetachFromFullNode")
 	defer func() { err = done(err) }()
@@ -67,6 +69,19 @@ func (w *ActorWorkflow) detachFromFullNode(ctx context.Context, actorRef resourc
 	if err != nil {
 		if canDetachWithoutAtelet(ctx, actor, err) {
 			return w.recordDetach(ctx, actorRef, actor, node, nil)
+		}
+		if errors.Is(err, ErrNoAteletOnNode) && latestLocalNotDurable(actor) {
+			gone, nodeErr := w.dialer.NodeGone(ctx, node)
+			if nodeErr != nil {
+				// The caller went away or the lease was lost: report that.
+				if ctx.Err() != nil {
+					return nil, fmt.Errorf("while checking node %q: %w: %w", node, nodeErr, ctx.Err())
+				}
+				return nil, apierror.Unavailable("while getting atelet conn for node %q: %w (and while checking the node: %w)", node, err, nodeErr)
+			}
+			if gone {
+				return w.recordGoneNode(ctx, actorRef, actor, node)
+			}
 		}
 		return nil, apierror.Unavailable("while getting atelet conn for node %q: %w", node, err)
 	}
@@ -140,6 +155,33 @@ func (w *ActorWorkflow) recordDetach(ctx context.Context, actorRef resources.Act
 		return nil, fmt.Errorf("while recording the detach of Actor %s from node %q: %w", actorRef, node, err)
 	}
 	return stored, nil
+}
+
+// recordGoneNode crashes an actor whose latest snapshot went with its deleted
+// node. It reads the actor again first, so an upload recorded during the node
+// lookup detaches it instead, and it crashes only the version it checked.
+func (w *ActorWorkflow) recordGoneNode(ctx context.Context, actorRef resources.ActorRef, actor *ateapipb.Actor, node string) (*ateapipb.Actor, error) {
+	actor, err := w.loadPinnedActor(ctx, actorRef, actor.GetMetadata().GetUid(), node)
+	if err != nil {
+		return nil, err
+	}
+	if !latestLocalNotDurable(actor) {
+		return w.recordDetach(ctx, actorRef, actor, node, nil)
+	}
+	if err := crashActorVersion(ctx, w.store, actorRef, actor, ateattr.OperationResume, crashMessageLocalSnapshotNodeGone); err != nil {
+		if errors.Is(err, store.ErrVersionConflict) {
+			return nil, apierror.Aborted("Actor %s changed during the resume, please retry", actorRef)
+		}
+		return nil, err
+	}
+	return nil, apierror.FailedPrecondition("actor %s is CRASHED: %s", actorRef, crashMessageLocalSnapshotNodeGone)
+}
+
+// latestLocalNotDurable reports whether the actor's latest local snapshot has
+// no completed durable copy.
+func latestLocalNotDurable(actor *ateapipb.Actor) bool {
+	local := findLatestLocalSnapshot(actor.GetStatus())
+	return local != nil && local.GetDurableSnapshot().GetStatus() != ateapipb.SnapshotStorageStatus_SNAPSHOT_STORAGE_STATUS_COMPLETED
 }
 
 func canDetachWithoutAtelet(ctx context.Context, actor *ateapipb.Actor, err error) bool {
