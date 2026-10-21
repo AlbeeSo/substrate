@@ -35,15 +35,13 @@ const (
 	// DefaultDetachDelay is how long an actor stays suspended on this node by
 	// default, its latest snapshot kept locally, before atelet detaches it.
 	DefaultDetachDelay = 30 * time.Minute
-	// DefaultUploadTimeout is how long one background upload attempt,
-	// including the one a background detach runs first, may run by default,
-	// on top of the time its snapshot takes at the estimated upload
-	// throughput, before atelet cancels it. It keeps a wedged object-store
-	// call from holding a background worker forever.
+	// DefaultUploadTimeout is how long an upload attempt, background or part
+	// of a detach, may run beyond its estimated upload time before atelet
+	// cancels it, so a wedged object-store call can't hold it forever.
 	DefaultUploadTimeout = 2 * time.Minute
 	// DefaultUploadEstThroughput, in bytes per second of a snapshot's
-	// allocated local size, is how fast atelet expects a background upload to
-	// run by default. Each attempt's timeout allows for the snapshot to upload
+	// allocated local size, is how fast atelet expects an upload to run by
+	// default. Each attempt's timeout allows for the snapshot to upload
 	// at this rate, so a large snapshot is not cut off.
 	DefaultUploadEstThroughput = 100 << 20
 	// maxUploadTimeoutDoublings caps how many times consecutive failures of
@@ -87,10 +85,9 @@ func (k opKind) String() string {
 	}
 }
 
-// logOp logs how an upload or detach ended. Foreground failures are returned
-// to the RPC caller, so only background failures are logged here: as a
-// warning, or at info level once ctx has ended, as when Terminate, an atelet
-// shutdown, or a newer durable snapshot cancels the operation.
+// logOp logs how an upload or detach ended. A failure logs as a warning, or at
+// info level once ctx has ended, as when Terminate, an atelet shutdown, or a
+// newer durable snapshot cancels the operation.
 func logOp(ctx context.Context, actorUID string, kind opKind, target SnapshotRef, uploaded, background bool, elapsed time.Duration, err error) {
 	attrs := []any{
 		slog.String("op", kind.String()),
@@ -103,7 +100,6 @@ func logOp(ctx context.Context, actorUID string, kind opKind, target SnapshotRef
 	switch {
 	case err == nil:
 		slog.InfoContext(ctx, "Snapshot operation finished", append(attrs, slog.Bool("uploaded", uploaded))...)
-	case !background:
 	case ctx.Err() != nil:
 		slog.InfoContext(ctx, "Snapshot operation canceled", append(attrs, slog.Any("err", err))...)
 	default:
@@ -114,9 +110,8 @@ func logOp(ctx context.Context, actorUID string, kind opKind, target SnapshotRef
 // actorOp is an actor's operation in progress: an upload or a detach. An
 // actor has at most one, of any kind.
 //
-// A worker runs it in the background once it is due. An atelet RPC such as
-// Detach runs it in the RPC's goroutine instead, without going through the
-// background queue.
+// A worker runs it in the background once it is due. A Detach call begins one
+// directly instead, and it runs on if the caller leaves.
 //
 // The operation holds the actor's lock only while it begins and ends, not
 // while it runs:
@@ -139,6 +134,9 @@ type actorOp struct {
 	// done is closed once the operation has ended, and has finished any change
 	// it makes to the actor's local snapshots.
 	done chan struct{}
+	// state and err are a detach's result, set before done is closed.
+	state *ateletpb.ActorSnapshotState
+	err   error
 }
 
 // Start reads each actor's snapshot state file on this node, queues the actor
@@ -177,9 +175,13 @@ func (t *Tracker) Start() {
 	}
 }
 
-// Wait blocks until the workers have stopped, which they do once the tracker's
-// context ends, or until ctx ends. It returns ctx's error if ctx ended first.
+// Wait blocks until the workers and any detach a Detach call started have
+// stopped, which they do once the tracker's context ends. It returns ctx's
+// error if ctx ends first. Detach starts nothing after Wait begins.
 func (t *Tracker) Wait(ctx context.Context) error {
+	t.foregroundMu.Lock()
+	t.waiting = true
+	t.foregroundMu.Unlock()
 	stopped := make(chan struct{})
 	go func() {
 		t.workersDone.Wait()
@@ -235,8 +237,7 @@ func (t *Tracker) beginDueWork(actorUID string, kind opKind) func() {
 	a := t.findLocked(actorUID)
 	if a == nil || a.op != nil {
 		// Forgotten, or an operation is already in progress on the actor: one
-		// a worker of the other queue began, or one an atelet RPC such as
-		// Detach runs in the RPC's goroutine. When that operation ends,
+		// a worker of the other queue or a Detach call began. When it ends,
 		// requeueLocked queues the actor again.
 		return nil
 	}
@@ -256,9 +257,9 @@ func (t *Tracker) beginDueWork(actorUID string, kind opKind) func() {
 				// (see holdLocked).
 				return nil
 			}
-			if finish, err := t.beginDetachLocked(t.ctx, a, true); err == nil {
+			if _, run, err := t.beginDetachLocked(t.ctx, a, true); err == nil {
 				t.instruments.recordDetachOverdue(t.ctx, now.Sub(due))
-				return func() { _, _ = finish() }
+				return run
 			}
 		}
 	case opUpload:

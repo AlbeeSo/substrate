@@ -89,10 +89,11 @@ type Store interface {
 //  7. A background upload that records a new LatestDurable, or a background
 //     detach that records one or clears LatestLocal, makes a report of the
 //     actor's state due (ReportDueSince), saved with the change so that it
-//     survives a restart. A Checkpoint, a PromoteSnapshot while a local
-//     snapshot is kept, or a Detach call returns the latest state to the
-//     control plane, so it cancels any pending report. Report workers, apart
-//     from the upload and detach workers, spread saved reports across a
+//     survives a restart. A Detach call does too, so the control plane records
+//     the detach even if the caller leaves or fails to. A Checkpoint or a
+//     PromoteSnapshot while a local snapshot is kept returns the latest state
+//     to the control plane, so it cancels any pending report. Report workers,
+//     apart from the upload and detach workers, spread saved reports across a
 //     startup window, send the actor's whole state through the Reporter, and
 //     retry with per-actor and queue-wide backoff until the control plane
 //     acknowledges or refuses it, a call cancels it, or reporting.giveUpAfter
@@ -100,8 +101,9 @@ type Store interface {
 //     PromoteSnapshot, or Terminate is in progress, and a background change
 //     made while a report ran is reported again.
 //
-// Detach runs in the calling goroutine rather than on a worker, so an explicit
-// control-plane call does not wait behind other actors' background work.
+// Detach runs under the tracker's context rather than on a worker, so an
+// explicit control-plane call does not wait behind other actors' background
+// work, and its detach finishes even if the caller leaves.
 //
 // The first table shows how each RPC on an actor treats the actor's upload or
 // detach in progress, and its report due. The RPC waits for the operation to
@@ -118,8 +120,9 @@ type Store interface {
 //	PromoteSnapshot       waits if the same   waits               cancels if a
 //	                      snapshot, else                          local snapshot
 //	                      cancels                                 is kept
-//	DetachActor           waits               waits               cancels unless
-//	                                                              it fails
+//	DetachActor           waits               waits               keeps, and its
+//	                                                              detach makes
+//	                                                              one due
 //	Terminate             cancels             cancels             cancels
 //
 // The second table shows whether an upload, detach, or report of the actor
@@ -151,18 +154,18 @@ type Tracker struct {
 	// this node before atelet detaches it: DefaultDetachDelay unless
 	// WithDetachDelay sets it.
 	detachDelay time.Duration
-	// uploadTimeout is how long one background upload attempt may run, on
+	// uploadTimeout is how long one upload attempt may run, on
 	// top of the time its snapshot takes at uploadEstThroughput (see
 	// uploadTimeoutFor), before it is canceled and retried:
 	// DefaultUploadTimeout unless WithUploadTimeout sets it. Zero or less
 	// turns the timeout off.
 	uploadTimeout time.Duration
 	// uploadEstThroughput, in bytes per second of a snapshot's allocated
-	// local size, is how fast atelet expects a background upload to run (see
+	// local size, is how fast atelet expects an upload to run (see
 	// uploadTimeoutFor): DefaultUploadEstThroughput unless
 	// WithUploadEstThroughput sets it.
 	uploadEstThroughput int64
-	// withTimeout derives the context a background upload attempt runs under:
+	// withTimeout derives the context an upload attempt runs under:
 	// context.WithTimeout, unless a test on a fake clock replaces it with one
 	// that times out on that clock.
 	withTimeout func(context.Context, time.Duration) (context.Context, context.CancelFunc)
@@ -189,8 +192,14 @@ type Tracker struct {
 	// reporting holds the queue and settings for reporting snapshot state
 	// changes to the control plane.
 	reporting reportQueue
-	// workersDone counts the workers still running.
+	// workersDone counts the workers, and the detaches Detach calls started,
+	// still running.
 	workersDone sync.WaitGroup
+	// foregroundMu guards waiting, and Detach holds it while adding to
+	// workersDone.
+	foregroundMu sync.Mutex
+	// waiting reports that Wait has begun.
+	waiting bool
 
 	// locks holds each actor's state lock. Short critical sections on an
 	// actor, including its snapshot state file I/O, hold that actor's lock, so
@@ -225,7 +234,7 @@ func WithDetachDelay(d time.Duration) Option {
 	}
 }
 
-// WithUploadTimeout sets how long one background upload attempt may run, on
+// WithUploadTimeout sets how long one upload attempt may run, on
 // top of the time its snapshot takes at the estimated upload throughput (see
 // WithUploadEstThroughput), before atelet cancels and retries it. Each
 // consecutive failure doubles the next attempt's timeout, to at most 8 times
